@@ -15,58 +15,60 @@
 #
 # NSCALE_VERSION and NSCALE_INSTALL_DIR are read when the parameters are not given.
 
-[CmdletBinding()]
-param(
-	[string]$Version = $env:NSCALE_VERSION,
-	[string]$InstallDir = $env:NSCALE_INSTALL_DIR,
-	[switch]$NoPathUpdate
-)
+# `irm | iex` evaluates this script in the caller's scope, so everything runs in a
+# script block to keep its parameters, variables, functions and preferences out of
+# the caller's session. `@args` forwards -Version and the other parameters when
+# the script is invoked as a script block.
+& {
+	[CmdletBinding()]
+	param(
+		[string]$Version = $env:NSCALE_VERSION,
+		[string]$InstallDir = $env:NSCALE_INSTALL_DIR,
+		[switch]$NoPathUpdate
+	)
 
-$Repo = 'nscaledev/homebrew-tap'
+	$Repo = 'nscaledev/homebrew-tap'
 
-# Windows PowerShell 5.1 may default to TLS 1.0, which GitHub refuses.
-if ($PSVersionTable.PSVersion.Major -lt 6) {
-	[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-}
-
-function Get-Arch {
-	$arch = $null
-	try {
-		$arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
-	} catch {
-		# Windows PowerShell on older .NET Framework has no RuntimeInformation.
-		$arch = $env:PROCESSOR_ARCHITEW6432
-		if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
+	# Windows PowerShell 5.1 may default to TLS 1.0, which GitHub refuses.
+	if ($PSVersionTable.PSVersion.Major -lt 6) {
+		[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 	}
-	switch ($arch) {
-		{ $_ -in 'X64', 'AMD64' } { return 'x86_64' }
-		{ $_ -in 'Arm64', 'ARM64' } { return 'arm64' }
-		{ $_ -in 'X86', 'x86' } { return 'i386' }
-		default { throw "Unsupported architecture: $arch" }
-	}
-}
 
-# Follow the "latest release" redirect to find the tag, avoiding the GitHub API
-# and its rate limit.
-function Get-LatestTag {
-	$url = "https://github.com/$Repo/releases/latest"
-	$request = [System.Net.WebRequest]::Create($url)
-	$request.Method = 'HEAD'
-	$response = $request.GetResponse()
-	try {
-		$tag = $response.ResponseUri.Segments[-1]
-	} finally {
-		$response.Close()
+	function Get-Arch {
+		$arch = $null
+		try {
+			$arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+		} catch {
+			# Windows PowerShell on older .NET Framework has no RuntimeInformation.
+			$arch = $env:PROCESSOR_ARCHITEW6432
+			if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
+		}
+		switch ($arch) {
+			{ $_ -in 'X64', 'AMD64' } { return 'x86_64' }
+			{ $_ -in 'Arm64', 'ARM64' } { return 'arm64' }
+			{ $_ -in 'X86', 'x86' } { return 'i386' }
+			default { throw "Unsupported architecture: $arch" }
+		}
 	}
-	if ($tag -notmatch '^v\d') {
-		throw "Could not determine the latest version from $url"
-	}
-	return $tag
-}
 
-# The body runs in a function so that `irm | iex`, which evaluates this script in
-# the caller's scope, does not leave preferences or variables behind.
-function Install-NscaleCli {
+	# Follow the "latest release" redirect to find the tag, avoiding the GitHub API
+	# and its rate limit.
+	function Get-LatestTag {
+		$url = "https://github.com/$Repo/releases/latest"
+		$request = [System.Net.WebRequest]::Create($url)
+		$request.Method = 'HEAD'
+		$response = $request.GetResponse()
+		try {
+			$tag = $response.ResponseUri.Segments[-1]
+		} finally {
+			$response.Close()
+		}
+		if ($tag -notmatch '^v\d') {
+			throw "Could not determine the latest version from $url"
+		}
+		return $tag
+	}
+
 	$ErrorActionPreference = 'Stop'
 	$ProgressPreference = 'SilentlyContinue'
 
@@ -139,6 +141,4 @@ function Install-NscaleCli {
 			$env:Path = "$env:Path;$InstallDir"
 		}
 	}
-}
-
-Install-NscaleCli
+} @args
