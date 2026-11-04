@@ -46,14 +46,19 @@ has() {
 }
 
 # download URL FILE
+#
+# A downloader killed by a signal, as by Ctrl-C, ends the script with its status.
+# Some shells run the caller's `|| fail` before the INT trap, which would blame
+# the version for the interruption.
 download() {
+	status=0
 	if has curl; then
-		curl -fsSL -o "$2" "$1"
-	elif has wget; then
-		wget -q -O "$2" "$1"
+		curl -fsSL -o "$2" "$1" || status=$?
 	else
-		fail "curl or wget is required"
+		wget -q -O "$2" "$1" || status=$?
 	fi
+	[ "$status" -le 128 ] || exit "$status"
+	return "$status"
 }
 
 # Print the tag the "latest release" page redirects to, for example v7.0.0.
@@ -93,91 +98,141 @@ detect_os() {
 	esac
 }
 
+# detect_arch OS
+#
+# uname -m reports the architecture of the current process, not the machine,
+# so check the machine where the two can differ.
 detect_arch() {
-	case "$(uname -m)" in
-	x86_64 | amd64) echo x86_64 ;;
-	arm64 | aarch64) echo arm64 ;;
-	i386 | i686) echo i386 ;;
-	*) fail "unsupported architecture: $(uname -m)" ;;
+	machine=$(uname -m)
+
+	# A shell running under Rosetta on Apple silicon reports x86_64.
+	if [ "$1" = Darwin ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
+		machine=arm64
+	fi
+
+	case "$machine" in
+	x86_64 | amd64) arch=x86_64 ;;
+	arm64 | aarch64) arch=arm64 ;;
+	i386 | i686) arch=i386 ;;
+	*) fail "unsupported architecture: ${machine}" ;;
+	esac
+
+	# A 64-bit kernel can run a 32-bit userland, for example Raspberry Pi OS.
+	if [ "$1" = Linux ] && [ "$(getconf LONG_BIT 2>/dev/null)" = 32 ]; then
+		case "$arch" in
+		x86_64) arch=i386 ;;
+		arm64) fail "32-bit ARM is not supported" ;;
+		esac
+	fi
+
+	echo "$arch"
+}
+
+# Print where TARGET resolves if it is a Homebrew-managed link, which points into
+# a Cellar. Print nothing otherwise.
+homebrew_link() {
+	[ -L "$1" ] || return 0
+	link=$(readlink "$1")
+	case "$link" in
+	*/Cellar/*) printf '%s\n' "$link" ;;
 	esac
 }
 
-version=${NSCALE_VERSION:-}
-install_dir=${NSCALE_INSTALL_DIR:-}
+# The whole install runs from main, called on the last line, so a download of
+# this script cut off by a dropped connection runs nothing.
+main() {
+	version=${NSCALE_VERSION:-}
+	install_dir=${NSCALE_INSTALL_DIR:-}
 
-while getopts "v:b:h" opt; do
-	case "$opt" in
-	v) version=$OPTARG ;;
-	b) install_dir=$OPTARG ;;
-	h)
-		usage
-		exit 0
-		;;
-	*)
-		usage >&2
-		exit 2
-		;;
-	esac
-done
+	while getopts "v:b:h" opt; do
+		case "$opt" in
+		v) version=$OPTARG ;;
+		b) install_dir=$OPTARG ;;
+		h)
+			usage
+			exit 0
+			;;
+		*)
+			usage >&2
+			exit 2
+			;;
+		esac
+	done
 
-has curl || has wget || fail "curl or wget is required"
+	has curl || has wget || fail "curl or wget is required"
 
-os=$(detect_os)
-arch=$(detect_arch)
+	os=$(detect_os)
+	arch=$(detect_arch "$os")
 
-if [ "$os" = Darwin ] && [ "$arch" = i386 ]; then
-	fail "32-bit macOS is not supported"
-fi
-
-if [ -z "$version" ] || [ "$version" = latest ]; then
-	tag=$(latest_tag)
-else
-	tag="v${version#v}"
-fi
-plain=${tag#v}
-
-archive="nscale-cli_${os}_${arch}.tar.gz"
-base="https://github.com/${REPO}/releases/download/${tag}"
-
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT INT TERM
-
-log "Installing nscale ${tag} (${os} ${arch})"
-
-download "${base}/${archive}" "${tmp}/${archive}" ||
-	fail "could not download ${base}/${archive}. Check that version ${plain} exists: https://github.com/${REPO}/releases"
-download "${base}/nscale-cli-${plain}-checksums.txt" "${tmp}/checksums.txt" ||
-	fail "could not download the checksums for ${tag}"
-
-expected=$(awk -v f="$archive" '$2 == f { print $1 }' "${tmp}/checksums.txt")
-[ -n "$expected" ] || fail "no checksum listed for ${archive}"
-actual=$(sha256 "${tmp}/${archive}")
-[ "$expected" = "$actual" ] || fail "checksum mismatch for ${archive}: expected ${expected}, got ${actual}"
-
-tar -xzf "${tmp}/${archive}" -C "$tmp" "$BINARY"
-
-if [ -z "$install_dir" ]; then
-	if [ -w /usr/local/bin ]; then
-		install_dir=/usr/local/bin
-	else
-		install_dir="${HOME}/.local/bin"
+	if [ "$os" = Darwin ] && [ "$arch" = i386 ]; then
+		fail "32-bit macOS is not supported"
 	fi
-fi
-# Expand a leading ~ that the shell left alone, as in -b "~/bin".
-# shellcheck disable=SC2088
-case "$install_dir" in
-"~") install_dir=$HOME ;;
-"~/"*) install_dir="${HOME}/${install_dir#"~/"}" ;;
-esac
 
-mkdir -p "$install_dir" || fail "could not create ${install_dir}"
-if ! install -m 0755 "${tmp}/${BINARY}" "${install_dir}/${BINARY}" 2>/dev/null; then
-	fail "could not write to ${install_dir}. Pass a writable directory with -b, or rerun with sudo"
-fi
+	if [ -z "$version" ] || [ "$version" = latest ]; then
+		tag=$(latest_tag)
+	else
+		tag="v${version#v}"
+	fi
+	plain=${tag#v}
 
-log "Installed ${install_dir}/${BINARY}"
+	if [ -z "$install_dir" ]; then
+		if [ -w /usr/local/bin ]; then
+			install_dir=/usr/local/bin
+		else
+			install_dir="${HOME}/.local/bin"
+		fi
+	fi
+	# Expand a leading ~ that the shell left alone, as in -b "~/bin".
+	# shellcheck disable=SC2088
+	case "$install_dir" in
+	"~") install_dir=$HOME ;;
+	"~/"*) install_dir="${HOME}/${install_dir#"~/"}" ;;
+	esac
+	target="${install_dir}/${BINARY}"
 
-case ":${PATH}:" in
-*":${install_dir}:"*) ;;
-*) log "Add ${install_dir} to your PATH to run nscale, for example: export PATH=\"${install_dir}:\$PATH\"" ;;
-esac
+	# On Intel Macs /usr/local/bin is Homebrew's prefix. Replacing its link with a
+	# standalone copy would break brew upgrade, so leave it to Homebrew.
+	brew_link=$(homebrew_link "$target")
+	if [ -n "$brew_link" ]; then
+		fail "${target} is managed by Homebrew (${brew_link}). Run 'brew upgrade nscale' instead, or pass -b to install somewhere else"
+	fi
+
+	archive="nscale-cli_${os}_${arch}.tar.gz"
+	base="https://github.com/${REPO}/releases/download/${tag}"
+
+	tmp=$(mktemp -d)
+	trap 'rm -rf "$tmp"' EXIT
+	trap 'rm -rf "$tmp"; exit 130' INT TERM
+
+	log "Installing nscale ${tag} (${os} ${arch})"
+
+	download "${base}/${archive}" "${tmp}/${archive}" ||
+		fail "could not download ${base}/${archive} (see the error above). If the version is wrong, the available versions are at https://github.com/${REPO}/releases"
+	download "${base}/nscale-cli-${plain}-checksums.txt" "${tmp}/checksums.txt" ||
+		fail "could not download the checksums for ${tag} (see the error above)"
+
+	expected=$(awk -v f="$archive" '$2 == f { print $1 }' "${tmp}/checksums.txt")
+	[ -n "$expected" ] || fail "no checksum listed for ${archive}"
+	actual=$(sha256 "${tmp}/${archive}")
+	[ "$expected" = "$actual" ] || fail "checksum mismatch for ${archive}: expected ${expected}, got ${actual}"
+
+	tar -xzf "${tmp}/${archive}" -C "$tmp" "$BINARY"
+
+	mkdir -p "$install_dir" || fail "could not create ${install_dir} (see the error above)"
+	install -m 0755 "${tmp}/${BINARY}" "$target" ||
+		fail "could not install to ${target} (see the error above). If it's a permissions problem, pass a writable directory with -b, or run the installer with sudo"
+
+	log "Installed ${target}"
+
+	case ":${PATH}:" in
+	*":${install_dir}:"*)
+		found=$(command -v "$BINARY" 2>/dev/null || true)
+		if [ -n "$found" ] && [ "$found" != "$target" ]; then
+			log "Note: ${found} comes first on your PATH, so 'nscale' still runs that copy"
+		fi
+		;;
+	*) log "Add ${install_dir} to your PATH to run nscale, for example: export PATH=\"${install_dir}:\$PATH\"" ;;
+	esac
+}
+
+main "$@"

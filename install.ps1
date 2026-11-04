@@ -69,6 +69,33 @@
 		return $tag
 	}
 
+	# Add Dir to the user PATH unless it is already there. Returns whether it was added.
+	function Add-UserPath([string]$Dir) {
+		# Read and write the registry value itself: the Environment API returns the
+		# expanded value and, on Windows PowerShell, writes it back as REG_SZ, which
+		# would turn entries like %USERPROFILE%\... into fixed paths.
+		$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+		try {
+			$raw = $key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+			$entries = @($raw -split ';' | Where-Object { $_ })
+			foreach ($entry in $entries) {
+				if ([Environment]::ExpandEnvironmentVariables($entry).TrimEnd('\') -eq $Dir) {
+					return $false
+				}
+			}
+			$key.SetValue('Path', (($entries + $Dir) -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+		} finally {
+			$key.Close()
+		}
+		# Writing the registry doesn't notify running programs. Setting and clearing a
+		# variable through the Environment API broadcasts WM_SETTINGCHANGE, so new
+		# terminals opened from Explorer see the updated PATH.
+		$name = 'NSCALE_INSTALL_' + [Guid]::NewGuid().ToString('N')
+		[Environment]::SetEnvironmentVariable($name, '1', 'User')
+		[Environment]::SetEnvironmentVariable($name, $null, 'User')
+		return $true
+	}
+
 	$ErrorActionPreference = 'Stop'
 	$ProgressPreference = 'SilentlyContinue'
 
@@ -87,6 +114,12 @@
 	if (-not $InstallDir) {
 		$InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\nscale'
 	}
+	# Resolve a relative path against the PowerShell location, since the PATH entry
+	# must be absolute, and drop a trailing separator so it matches existing entries.
+	$InstallDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDir)
+	if ($InstallDir.Length -gt 3) {
+		$InstallDir = $InstallDir.TrimEnd('\', '/')
+	}
 
 	$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("nscale-" + [System.Guid]::NewGuid())
 	New-Item -ItemType Directory -Path $tmp | Out-Null
@@ -99,7 +132,7 @@
 		try {
 			Invoke-WebRequest -UseBasicParsing -Uri "$base/$archive" -OutFile $archivePath
 		} catch {
-			throw "Could not download $base/$archive. Check that version $plain exists: https://github.com/$Repo/releases"
+			throw "Could not download $base/${archive}: $($_.Exception.Message) If the version is wrong, the available versions are at https://github.com/$Repo/releases"
 		}
 		Invoke-WebRequest -UseBasicParsing -Uri "$base/nscale-cli-$plain-checksums.txt" -OutFile $checksumsPath
 
@@ -130,14 +163,11 @@
 		Remove-Item -Recurse -Force -Path $tmp -ErrorAction SilentlyContinue
 	}
 
-	if (-not $NoPathUpdate) {
-		$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-		$entries = @($userPath -split ';' | Where-Object { $_ })
-		if ($entries -notcontains $InstallDir) {
-			[Environment]::SetEnvironmentVariable('Path', (($entries + $InstallDir) -join ';'), 'User')
+	if (-not $NoPathUpdate -and [Environment]::OSVersion.Platform -eq 'Win32NT') {
+		if (Add-UserPath $InstallDir) {
 			Write-Host "Added $InstallDir to your user PATH. Open a new terminal to run nscale."
 		}
-		if (($env:Path -split ';') -notcontains $InstallDir) {
+		if (($env:Path -split ';' | ForEach-Object { $_.TrimEnd('\') }) -notcontains $InstallDir) {
 			$env:Path = "$env:Path;$InstallDir"
 		}
 	}
