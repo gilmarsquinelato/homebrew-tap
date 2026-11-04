@@ -1,11 +1,11 @@
 # Install the Nscale CLI on Windows.
 #
-#   irm https://docs.nscale.com/install.ps1 | iex
+#   irm https://docs.nscale.com/cli/install.ps1 | iex
 #
 # Pin a version or choose the install directory:
 #
-#   & ([scriptblock]::Create((irm https://docs.nscale.com/install.ps1))) -Version 6.2.0
-#   $env:NSCALE_VERSION = '6.2.0'; irm https://docs.nscale.com/install.ps1 | iex
+#   & ([scriptblock]::Create((irm https://docs.nscale.com/cli/install.ps1))) -Version 6.2.0
+#   $env:NSCALE_VERSION = '6.2.0'; irm https://docs.nscale.com/cli/install.ps1 | iex
 #
 # Parameters:
 #   -Version     Version to install, for example 7.0.0 or v7.0.0 (default: latest).

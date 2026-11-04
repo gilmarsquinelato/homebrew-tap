@@ -1,8 +1,8 @@
 #!/bin/sh
 # Install the Nscale CLI on macOS or Linux.
 #
-#   curl -fsSL https://docs.nscale.com/install.sh | sh
-#   curl -fsSL https://docs.nscale.com/install.sh | sh -s -- -v 6.2.0 -b ~/.local/bin
+#   curl -fsSL https://docs.nscale.com/cli/install.sh | sh
+#   curl -fsSL https://docs.nscale.com/cli/install.sh | sh -s -- -v 6.2.0 -b ~/.local/bin
 #
 # Options:
 #   -v VERSION  Version to install, for example 7.0.0 or v7.0.0 (default: latest).
@@ -88,7 +88,7 @@ detect_os() {
 	case "$(uname -s)" in
 	Darwin) echo Darwin ;;
 	Linux) echo Linux ;;
-	MINGW* | MSYS* | CYGWIN*) fail "on Windows, use install.ps1: irm https://docs.nscale.com/install.ps1 | iex" ;;
+	MINGW* | MSYS* | CYGWIN*) fail "on Windows, use install.ps1: irm https://docs.nscale.com/cli/install.ps1 | iex" ;;
 	*) fail "unsupported operating system: $(uname -s)" ;;
 	esac
 }
