@@ -1,0 +1,6 @@
+# The install scripts run as `curl | sh` and `irm | iex` from
+# docs.nscale.com/cli/install.*, so changes to them need a review from the CLI
+# owners. GoReleaser's formula commits under Formula/ are not covered.
+/install.sh @nscaledev/ui-engineers
+/install.ps1 @nscaledev/ui-engineers
+/.github/CODEOWNERS @nscaledev/ui-engineers

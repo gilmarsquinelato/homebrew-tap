@@ -158,6 +158,12 @@ main() {
 			;;
 		esac
 	done
+	shift $((OPTIND - 1))
+	if [ "$#" -gt 0 ]; then
+		log "Error: unexpected argument: $1 (use -v to pick a version)"
+		usage >&2
+		exit 2
+	fi
 
 	has curl || has wget || fail "curl or wget is required"
 
@@ -187,6 +193,10 @@ main() {
 	case "$install_dir" in
 	"~") install_dir=$HOME ;;
 	"~/"*) install_dir="${HOME}/${install_dir#"~/"}" ;;
+	esac
+	# Drop a trailing slash so the PATH check below matches, but keep /.
+	case "$install_dir" in
+	?*/) install_dir=${install_dir%/} ;;
 	esac
 	target="${install_dir}/${BINARY}"
 

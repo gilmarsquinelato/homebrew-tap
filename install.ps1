@@ -99,6 +99,10 @@
 	$ErrorActionPreference = 'Stop'
 	$ProgressPreference = 'SilentlyContinue'
 
+	if ([Environment]::OSVersion.Platform -ne 'Win32NT') {
+		throw 'install.ps1 installs the Windows build. On macOS or Linux, run: curl -fsSL https://docs.nscale.com/cli/install.sh | sh'
+	}
+
 	$arch = Get-Arch
 
 	if (-not $Version -or $Version -eq 'latest') {
@@ -163,7 +167,7 @@
 		Remove-Item -Recurse -Force -Path $tmp -ErrorAction SilentlyContinue
 	}
 
-	if (-not $NoPathUpdate -and [Environment]::OSVersion.Platform -eq 'Win32NT') {
+	if (-not $NoPathUpdate) {
 		if (Add-UserPath $InstallDir) {
 			Write-Host "Added $InstallDir to your user PATH. Open a new terminal to run nscale."
 		}
